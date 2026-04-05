@@ -1,11 +1,38 @@
+/*
+ * msdf.h - 简易的缩进式配置解析器
+ *
+ * 用法：
+ *   在**一个**C文件中定义 MSDF_IMPLEMENTATION 宏，然后包含此头文件。
+ *   在其他需要接口的文件中，直接包含此头文件即可。
+ *
+ *   示例：
+ *     #define MSDF_IMPLEMENTATION
+ *     #include "msdf.h"
+ *
+ *     int main() {
+ *         MsdfParseResult res = msdf_parse("Screen:\n    Button:\n        text = \"OK\"");
+ *         if (!res.has_error) msdf_print(res.root);
+ *         msdf_free(res.root);
+ *         free(res.error_msg);
+ *         return 0;
+ *     }
+ */
+
+#ifndef MSDF_H_INCLUDED
+#define MSDF_H_INCLUDED
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // ------------------------------
-// 数据结构
+// 公共数据类型
 // ------------------------------
 typedef struct MsdfAttribute {
     char *key;
@@ -28,13 +55,27 @@ typedef struct {
 typedef struct {
     bool has_error;
     int error_line;
-    char *error_msg;   // 动态分配
+    char *error_msg;   // 动态分配，需调用者释放
     MsdfRoot root;
 } MsdfParseResult;
 
 // ------------------------------
-// 辅助函数
+// 公共 API 声明
 // ------------------------------
+extern void msdf_free_node(MsdfNode *n);
+extern void msdf_free(MsdfRoot root);
+extern void msdf_print(MsdfRoot root);
+extern MsdfParseResult msdf_parse(const char *input);
+
+#ifdef __cplusplus
+}
+#endif
+
+// ------------------------------
+// 实现部分
+// ------------------------------
+#ifdef MSDF_IMPLEMENTATION
+
 static void append_child(MsdfNode *parent, MsdfNode *child) {
     parent->children = realloc(parent->children, (parent->children_cnt + 1) * sizeof(MsdfNode*));
     parent->children[parent->children_cnt++] = child;
@@ -47,9 +88,6 @@ static void append_attr(MsdfNode *node, const char *key, const char *value) {
     node->attrs_cnt++;
 }
 
-// ------------------------------
-// 安全的释放函数
-// ------------------------------
 void msdf_free_node(MsdfNode *n) {
     if (!n) return;
     for (size_t i = 0; i < n->attrs_cnt; i++) {
@@ -74,9 +112,6 @@ void msdf_free(MsdfRoot root) {
     }
 }
 
-// ------------------------------
-// 打印树
-// ------------------------------
 static void print_node(MsdfNode *n, int indent) {
     for (int i = 0; i < indent; i++) printf("  ");
     printf("- %s", n->name);
@@ -92,9 +127,6 @@ void msdf_print(MsdfRoot root) {
         print_node(root.ptr[i], 0);
 }
 
-// ------------------------------
-// 解析器核心
-// ------------------------------
 static int count_indent(const char *s) {
     int spaces = 0;
     while (*s == ' ') { spaces++; s++; }
@@ -124,7 +156,6 @@ MsdfParseResult msdf_parse(const char *input) {
         return res;
     }
 
-    // 用于维护父子关系的栈（存储当前路径上的节点）
     MsdfNode **stack = NULL;
     int *indent_stack = NULL;
     int stack_size = 0;
@@ -134,7 +165,6 @@ MsdfParseResult msdf_parse(const char *input) {
     int line_num = 1;
 
     while (line) {
-        // 跳过空行和注释
         char *trimmed = trim(line);
         if (trimmed[0] == '#' || trimmed[0] == '\0') {
             line = strtok(NULL, "\n");
@@ -143,14 +173,12 @@ MsdfParseResult msdf_parse(const char *input) {
         }
 
         int indent = count_indent(line);
-        char *content = line + indent;   // 去除前导空格后的内容
+        char *content = line + indent;
 
-        // 判断行类型：节点行（以冒号结尾）还是属性行（包含等号）
         bool is_node = (strchr(content, ':') != NULL);
         bool is_attr = (strchr(content, '=') != NULL);
 
         if (!is_node && !is_attr) {
-            // 非法行
             res.has_error = true;
             res.error_line = line_num;
             res.error_msg = strdup("Unexpected line format");
@@ -158,7 +186,6 @@ MsdfParseResult msdf_parse(const char *input) {
         }
 
         if (is_node) {
-            // 节点行格式： "Name:"  或  "Name :"  去掉尾部空格
             char *colon = strchr(content, ':');
             *colon = '\0';
             char *node_name = trim(content);
@@ -172,22 +199,17 @@ MsdfParseResult msdf_parse(const char *input) {
             MsdfNode *new_node = calloc(1, sizeof(MsdfNode));
             new_node->name = strdup(node_name);
 
-            // 根据缩进确定父节点
-            // 弹出栈中缩进 >= 当前缩进的节点（回到正确的父层级）
             while (stack_size > 0 && indent_stack[stack_size-1] >= indent) {
                 stack_size--;
             }
 
             if (stack_size == 0) {
-                // 顶层节点，添加到 root
                 res.root.ptr = realloc(res.root.ptr, (res.root.cnt + 1) * sizeof(MsdfNode*));
                 res.root.ptr[res.root.cnt++] = new_node;
             } else {
-                // 父节点是栈顶
                 append_child(stack[stack_size-1], new_node);
             }
 
-            // 将当前节点压栈
             if (stack_size >= stack_cap) {
                 stack_cap = stack_cap ? stack_cap*2 : 8;
                 stack = realloc(stack, stack_cap * sizeof(MsdfNode*));
@@ -198,7 +220,6 @@ MsdfParseResult msdf_parse(const char *input) {
             stack_size++;
         }
         else if (is_attr) {
-            // 属性行格式： key = value
             char *eq = strchr(content, '=');
             *eq = '\0';
             char *key = trim(content);
@@ -231,3 +252,7 @@ cleanup:
     }
     return res;
 }
+
+#endif // MSDF_IMPLEMENTATION
+
+#endif // MSDF_H_INCLUDED
