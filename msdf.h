@@ -1,6 +1,6 @@
 /*
  * msdf.h - 简易的缩进式配置解析器
- *
+ * authors: azhz1107cat, deepseek
  * 用法：
  *   在**一个**C文件中定义 MSDF_IMPLEMENTATION 宏，然后包含此头文件。
  *   在其他需要接口的文件中，直接包含此头文件即可。
